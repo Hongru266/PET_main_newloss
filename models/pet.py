@@ -514,6 +514,7 @@ class SetCriterion(nn.Module):
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
+        # print(f'indices length inside criterion: {len(indices)}')
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
         src_idx = torch.cat([src for (src, _) in indices])
         return batch_idx, src_idx
@@ -540,8 +541,9 @@ class SetCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         # retrieve the matching between the outputs of the last layer and the targets
-        print(f'targets length:{len(targets)}, targets[0]:{targets[0].keys()}, outputs: {outputs.keys()}')
+        # print(f'targets length:{len(targets)}, outputs: {outputs.keys()}, outputs pred_points shape:{outputs["pred_points"].shape if "pred_points" in outputs else None}')
         indices = self.matcher(outputs, targets)
+        # print(f'indices: {indices}')
 
         # compute the average number of target points accross all nodes, for normalization purposes
         num_points = sum(len(t["labels"]) for t in targets)

@@ -160,6 +160,7 @@ class SHA(Dataset):
         # print(f'after flip: img shape: {img.shape}, points shape: {points.shape}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}')
         # target
         target = {}
+        # print(f'points shape:{points.shape}, points sample: {points[:5]}')  # 打印前5个点作为示例
         target['points'] = torch.Tensor(points)
         target['labels'] = torch.ones([points.shape[0]]).long()
         
@@ -255,6 +256,7 @@ class SHA(Dataset):
         # print(f'offset_map: {offset_map}')
         np.save("0901_binary_target_masks.npy", binary_target_masks.cpu().numpy())
         np.save("0901_offset_map.npy", offset_map.cpu().numpy())
+        # print(f'target points shape:{target["points"].shape}, target masks shape:{target["masks"].shape}')
 
         return img, target
 
