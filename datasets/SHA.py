@@ -20,7 +20,7 @@ class SHA(Dataset):
         self.train = train  # 先定义 self.train
         self.transform = transform
         self.flip = flip
-        self.patch_size = 256
+        self.patch_size = 512
         
         prefix = "train_data" if train else "test_data"
         self.prefix = prefix
@@ -72,34 +72,6 @@ class SHA(Dataset):
             masks_path = None
             dict_path = None
         img, points, masks, dicts = load_data((img_path, gt_path, masks_path, dict_path), self.train)
-        # print(f'unique labels in masks: {np.unique(masks)}')  # 输出唯一标签
-        # if self.train:
-        #     print(f'image size: {img.size}, points shape: {points.shape}, masks shape: {masks.shape}, dicts length: {len(dicts)}')
-        #     # if points.size > 0:  # 确保 points 不为空
-        #     #     # 简化版本：直接找到最大值和最小值所在的行
-        #     #     max_row_idx = points.max(axis=1).argmax()  # 找到每行最大值中的最大值所在行
-        #     #     min_row_idx = points.min(axis=1).argmin()  # 找到每行最小值中的最小值所在行
-        #     #     print(f'points max: {points.max()} at point {points[max_row_idx]} (row {max_row_idx})')
-        #     #     print(f'points min: {points.min()} at point {points[min_row_idx]} (row {min_row_idx})')
-                
-        #     #     # 找出所有坐标值中的全局最大值和最小值对应的坐标
-        #     #     if dicts:
-        #     #         coords = list(dicts.values())
-        #     #         # 将所有坐标展平为一个列表，每个元素是 (坐标值, 完整坐标)
-        #     #         all_values = [(coord[0], coord) for coord in coords] + [(coord[1], coord) for coord in coords]
-                    
-        #     #         # 找到全局最大值和最小值对应的坐标
-        #     #         global_max = max(all_values, key=lambda x: x[0])
-        #     #         global_min = min(all_values, key=lambda x: x[0])
-                    
-        #     #         print(f'Global max value: {global_max[0]} at coordinate {global_max[1]}')
-        #     #         print(f'Global min value: {global_min[0]} at coordinate {global_min[1]}')
-        #     #     else:
-        #     #         print('dicts is empty, no coordinates to analyze')
-        #     # else:
-        #     #     print('points array is empty')
-        # else:
-        #     print(f'image size: {img.size}, points shape: {points.shape}')
         points = points.astype(float)
 
         # image transform
@@ -112,7 +84,7 @@ class SHA(Dataset):
             img = torch.from_numpy(img).float()
         elif not isinstance(img, torch.Tensor):
             img = torch.Tensor(img)
-        # print(f'after transform: img shape: {img.shape}, points shape: {points.shape}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}')
+        # print(f'after transform: img shape: {img.shape}, points shape: {points.shape}, points[:, 0] max:{points[:, 0].max()}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}')
         # random scale
         if self.train:
             scale_range = [0.8, 1.2]           
@@ -135,12 +107,23 @@ class SHA(Dataset):
                         key: (coord[0] * scale, coord[1] * scale) if isinstance(coord, (tuple, list)) and len(coord) >= 2 else coord
                         for key, coord in dicts.items()
                     }
-        # print(f'after scale: img shape: {img.shape}, points shape: {points.shape}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}')
+        # print(f'after random scale: img shape: {img.shape}, points shape: {points.shape}, points[:, 0] max:{points[:, 0].max()}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}, dicts[:, 0] max: {np.array(list(dicts.values()))[:,0].max() if len(dicts) > 0 else "N/A"}')
         # random crop patch
+        patch_h, patch_w = self.patch_size, self.patch_size
+        if img.size(1) < patch_h or img.size(2) < patch_w:
+            scale_factor = max(patch_h / img.size(1), patch_w / img.size(2))
+            img = torch.nn.functional.interpolate(img.unsqueeze(0), scale_factor=scale_factor, mode="bilinear", align_corners=False).squeeze(0)
+            points = points * scale_factor
+            if masks is not None and len(masks) > 0:
+                if masks.dtype == np.uint16:
+                    masks = masks.astype(np.uint8)  # 或者使用 np.int32
+                masks = torch.from_numpy(masks)
+                masks = torch.nn.functional.interpolate(masks.unsqueeze(0).unsqueeze(0).float(), scale_factor=scale_factor).squeeze().long()
+            dicts = {k: (coord[0]*scale_factor, coord[1]*scale_factor) for k, coord in dicts.items()}
+            # print(f'after resize for crop: img shape: {img.shape}, points shape: {points.shape}, points[:, 0] max:{points[:, 0].max()}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}')
         if self.train:
             img, points, masks, dicts = random_crop(img, points, masks, dicts, patch_size=self.patch_size)
-        # print(f'after crop: img shape: {img.shape}, points shape: {points.shape}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}')
-
+        # print(f'after random crop: img shape: {img.shape}, points shape: {points.shape}, points[:, 0] max:{points[:, 0].max()}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}')
         # random flip 随机翻转进行数据增强
         if random.random() > 0.5 and self.train and self.flip:
             img = torch.flip(img, dims=[2])
@@ -157,13 +140,13 @@ class SHA(Dataset):
                     key: (coord[0], self.patch_size - coord[1]) if isinstance(coord, (tuple, list)) and len(coord) >= 2 else coord
                     for key, coord in dicts.items()
                 }
-        # print(f'after flip: img shape: {img.shape}, points shape: {points.shape}, masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts length: {len(dicts)}')
+        
         # target
         target = {}
-        # print(f'points shape:{points.shape}, points sample: {points[:5]}')  # 打印前5个点作为示例
+        dicts_values = list(dicts.values())
+        # print(f'img shape:{img.shape}, masks shape:{masks.shape}, dicts[:, 0] max:{np.array(dicts_values)[:, 0].max() if dicts_values else "N/A"}, points shape:{points.shape}, points[:, 0] max:{points[:, 0].max()}, points[:, 1] max:{points[:, 1].max()}')  # 打印前5个点作为示例
         target['points'] = torch.Tensor(points)
         target['labels'] = torch.ones([points.shape[0]]).long()
-        
 
         if self.train:
             density = self.compute_density(points) #通过计算真实标注点之间的平均最近距离来衡量人群的拥挤程度
@@ -189,7 +172,8 @@ class SHA(Dataset):
             target['masks'] = torch.empty(0, dtype=torch.uint8)
             target['dicts_coords'] = torch.empty(0, 2, dtype=torch.float32) 
             target['dicts_keys'] = torch.empty(0, dtype=torch.long)
-        # print(f'after target: img shape: {img.shape}, points shape: {target["points"].shape}, masks shape: {target["masks"].shape if len(masks) > 0 else "N/A"}, dicts_coords shape: {target["dicts_coords"].shape}, dicts_keys shape: {target["dicts_keys"].shape}')
+        dicts_coords_values = target['dicts_coords'].numpy() if hasattr(target["dicts_coords"], "numpy") else target["dicts_coords"]
+        # print(f'after target: img shape: {img.shape}, points shape: {target["points"].shape}, masks shape: {target["masks"].shape if len(masks) > 0 else "N/A"}, dicts_coords shape: {target["dicts_coords"].shape}, dicts_coords[:, 0] max:{dicts_coords_values[:, 0].max()}, dicts_keys shape: {target["dicts_keys"].shape}')
         if not self.train:
             target['image_path'] = img_path
 
@@ -265,7 +249,7 @@ def load_data(img_gt_path, train):
     img_path, gt_path, masks_path, dict_path = img_gt_path
     img = cv2.imread(img_path)
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    points = io.loadmat(gt_path)['image_info'][0][0][0][0][0][:,::-1]
+    points = io.loadmat(gt_path)['image_info'][0][0][0][0][0][:,::-1]  # (N,2) - (x,y)
     
     if train and masks_path is not None and dict_path is not None:
         masks = np.load(masks_path)
@@ -285,13 +269,17 @@ def load_data(img_gt_path, train):
         # 测试模式下返回空的 masks 和 dicts
         masks = np.array([])
         dicts = {}
-    
+    dicts_array = np.array(list(dicts.values()))
+    # print(f'original: img shape: {img.size}, points shape: {points.shape}, points example:{points[:,0].max()} masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts[:, 0] max: {dicts_array[:,0].max() if len(dicts_array) > 0 else "N/A"}')
+
     return img, points, masks, dicts
 
 
 def random_crop(img, points, masks, dicts, patch_size=256):
     patch_h = patch_size
     patch_w = patch_size
+    dicts_array = np.array(list(dicts.values()))
+    # print(f'img shape before crop: {img.shape}, points shape before crop: {points.shape},points[:, 0] max:{points[:, 0].max()}, masks shape before crop: {masks.shape if len(masks) > 0 else "N/A"}, dicts length before crop: {len(dicts)}, dicts[:, 0] max: {dicts_array[:,0].max() if len(dicts_array) > 0 else "N/A"}')
     
     # random crop
     start_h = random.randint(0, img.size(1) - patch_h) if img.size(1) > patch_h else 0
@@ -299,6 +287,7 @@ def random_crop(img, points, masks, dicts, patch_size=256):
     end_h = start_h + patch_h
     end_w = start_w + patch_w
     idx = (points[:, 0] >= start_h) & (points[:, 0] <= end_h) & (points[:, 1] >= start_w) & (points[:, 1] <= end_w)
+    # print(f'Crop region - start_h:{start_h}, end_h:{end_h}, start_w:{start_w}, end_w:{end_w}, points before crop: {points.shape[0]}, points after crop: {np.sum(idx)}')
     
     # 优化：使用字典推导式和一次性处理
     # 筛选并直接调整坐标到新的坐标系统

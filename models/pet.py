@@ -108,6 +108,7 @@ class BasePETCount(nn.Module):
         v_idx = valid_div > 0
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
+        v_idx = v_idx.to(points_queries_win.device)
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
     
         return query_embed_win, points_queries_win, query_feats_win, v_idx
@@ -471,9 +472,10 @@ class SetCriterion(nn.Module):
         """
         assert 'pred_points' in outputs
         # get indices
-        idx = self._get_src_permutation_idx(indices)
-        src_points = outputs['pred_points'][idx]
-        target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        idx = self._get_src_permutation_idx(indices) #根据匹配结果获得预测点与目标点的索引
+        src_points = outputs['pred_points'][idx] #取出匹配的预测点
+        target_points = torch.cat([t['points'][i] for t, (_, i) in zip(targets, indices)], dim=0) #取出匹配的目标点并拼接为一个大tensor
+        # print(f'src_points shape: {src_points.shape}, target_points shape: {target_points.shape}')
 
         # compute regression loss
         losses = {}
@@ -481,7 +483,8 @@ class SetCriterion(nn.Module):
         img_h, img_w = img_shape
         target_points[:, 0] /= img_h
         target_points[:, 1] /= img_w
-        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
+        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none') #逐点计算平滑L1损失
+        # print(f'loss_points_raw shape: {loss_points_raw.shape}')
 
         if 'div' in kwargs:
             # get sparse / dense index
@@ -546,8 +549,8 @@ class SetCriterion(nn.Module):
         # print(f'indices: {indices}')
 
         # compute the average number of target points accross all nodes, for normalization purposes
-        num_points = sum(len(t["labels"]) for t in targets)
-        num_points = torch.as_tensor([num_points], dtype=torch.float, device=next(iter(outputs.values())).device)
+        num_points = sum(len(t["labels"]) for t in targets) #统计本batch中所有样本的标签（点）总数
+        num_points = torch.as_tensor([num_points], dtype=torch.float, device=next(iter(outputs.values())).device) #将总数转为张量并放到GPU上
         if is_dist_avail_and_initialized():
             torch.distributed.all_reduce(num_points)
         num_points = torch.clamp(num_points / get_world_size(), min=1).item()

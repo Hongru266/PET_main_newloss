@@ -165,7 +165,7 @@ def main(args):
 
 
     # 检查自动checkpoint目录
-    ckpt_dir_name = f"{args.output_dir}_{args.lr}_{args.batch_size}_0909_try1"
+    ckpt_dir_name = f"{args.output_dir}_{args.lr}_{args.batch_size}_0910_try1"
     # ckpt_dir_name += f"{args.bce_loss_coef}_{args.smoothl1_loss_coef}_0908_try1"
     args.ckpt_dir = os.path.join("checkpoints", args.dataset_file, ckpt_dir_name)
     # 如果没有命令行指定的resume路径，则尝试从自动保存目录恢复

@@ -57,11 +57,13 @@ class SHA(Dataset):
         gt_path = self.gt_list[img_path]
         img, points = load_data((img_path, gt_path), self.train)
         points = points.astype(float)
+        print(f'load image shape: {img.size}, points num: {points.shape}')
 
         # image transform
         if self.transform is not None:
             img = self.transform(img)
         img = torch.Tensor(img)
+        print(f'after transform image shape: {img.shape}')
 
         # random scale
         if self.train:
@@ -98,7 +100,7 @@ class SHA(Dataset):
         return img, target
 
 
-def load_data(img_gt_path, mask_path, train):
+def load_data(img_gt_path, train):
     img_path, gt_path = img_gt_path
     img = cv2.imread(img_path)
     if img is None:
