@@ -25,7 +25,7 @@ def get_args_parser():
     # training Parameters
     parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
-    parser.add_argument('--batch_size', default=4, type=int)
+    parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
@@ -170,7 +170,9 @@ def main(args):
     args.ckpt_dir = os.path.join("checkpoints", args.dataset_file, ckpt_dir_name)
     # 如果没有命令行指定的resume路径，则尝试从自动保存目录恢复
     if not args.resume and os.path.exists(args.ckpt_dir):
-        ckpt_path = os.path.join(args.ckpt_dir, "checkpoint.pth")
+        output_dir = os.path.join("./outputs", args.dataset_file, args.output_dir)
+        ckpt_path = os.path.join(output_dir, "checkpoint.pth")
+        # ckpt_path = os.path.join(args.ckpt_dir, "checkpoint.pth")
         if os.path.isfile(ckpt_path):
             try:
                 checkpoint = torch.load(ckpt_path, map_location='cpu')
@@ -200,9 +202,10 @@ def main(args):
 
     # output directory and log 
     if utils.is_main_process:
-        output_dir = os.path.join("./outputs", args.dataset_file, args.output_dir)
-        os.makedirs(output_dir, exist_ok=True)
-        output_dir = Path(output_dir)
+        # output_dir = os.path.join("./outputs", args.dataset_file, args.output_dir)
+        # os.makedirs(output_dir, exist_ok=True)
+        # output_dir = Path(output_dir)
+        output_dir = Path(args.ckpt_dir)
         run_log_name = os.path.join(output_dir, 'run_log.txt')
         with open(run_log_name, "a") as log_file:
             log_file.write('Run Log %s\n' % time.strftime("%c"))
@@ -210,7 +213,7 @@ def main(args):
             log_file.write("parameters: {}".format(n_parameters))
 
     # resume
-    best_mae, best_epoch = 1e8, 0
+    best_mae, best_rmse,  best_epoch = 1e8, 1e8, 0
     if args.resume:
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
@@ -224,6 +227,7 @@ def main(args):
             args.start_epoch = checkpoint['epoch'] + 1
             best_mae = checkpoint['best_mae']
             best_epoch = checkpoint['best_epoch']
+            best_rmse = checkpoint['best_rmse']
 
     # training
     print("Start training")
@@ -256,6 +260,7 @@ def main(args):
                 'epoch': epoch,
                 'args': args,
                 'best_mae': best_mae,
+                'best_rmse': best_rmse,
             }, checkpoint_path)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},

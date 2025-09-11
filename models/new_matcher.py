@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 from typing import List, Tuple, Dict, Any
+from scipy.optimize import linear_sum_assignment
 
 class PointsMasksMatcher(nn.Module):
     """
@@ -90,22 +91,16 @@ class PointsMasksMatcher(nn.Module):
         # one-hot 展开: [H, W] -> [H, W, N]
         masks = torch.nn.functional.one_hot(label_map.long(), num_classes=num_classes+1)  # 包含背景
         masks = masks.permute(2, 0, 1).contiguous()  # -> [N+1, H, W]
-        # print(f'masks shape:{masks.shape}, num_classes:{num_classes}, points_ids length:{len(points_ids)}')
         points_ids = points_ids + 1  # 因为masks包含背景，点ID需要+1对齐
         valid_mask = (points_ids >= 0) & (points_ids < masks.shape[0])
 
-        # if not valid_mask.all():
-        #     print(f"Warning: { (~valid_mask).sum().item() } invalid points_ids detected, will be ignored.")
         points_ids = points_ids[valid_mask]
-        # print(f'points_ids shape:{len(points_ids)}, valid_mask shape:{len(valid_mask)}')
-
+       
         if points_ids.numel() == 0:
             # 返回空 mask 避免报错
             return torch.zeros(0, *label_map.shape, dtype=torch.bool, device=label_map.device)
         
         masks = masks[points_ids]  # 只保留 points_ids 对应的掩码
-        # print(f'masks after indexing shape:{masks.shape}')
-        # print(f'masks after indexing shape:{masks.shape}')
         
         return masks
     
@@ -120,49 +115,30 @@ class PointsMasksMatcher(nn.Module):
         # 初始化
         forced_pairs = []
         total_cost = 0.0
-        matched_points = set()
 
         # step1: 判断哪些预测点落在 mask 内
         inside_matrix = self._find_points_in_masks(U, masks, H, W)
 
-        # print(f'inside_matrix shape: {inside_matrix.shape}, inside_matrix: {inside_matrix}, inside_matrix type: {type(inside_matrix)}')
-
         all_points = set(range(num_points))
-        all_in_masks = []
-        inside_matrix = inside_matrix.type(torch.int32)
-        # print(f'inside_matrix shape: {inside_matrix.shape}, inside_matrix: {inside_matrix}, inside_matrix type: {type(inside_matrix)}')
-        mask_vec = (inside_matrix.sum(dim=0) > 0).cpu()   # CPU 上的 bool tensor
-        # sum0 = sum0.tolist()
-        # print(f'sum:{sum0}, sum0 type:{type(sum0)}')
-        all_in_masks = mask_vec.nonzero(as_tuple=False).squeeze(1).tolist()
-        all_in_masks = set(all_in_masks)
-        # print(f'inside_matrix shape:{inside_matrix.shape}, sum0 shape:{sum0.shape}, sum0:{sum0}, all_in_masks: {all_in_masks}')
-        bg_points = all_points - all_in_masks
-        avaliable_points = all_in_masks
-        # print(f'inside_matrix shape:{inside_matrix.shape}, masks shape:{masks.shape}, points shape:{V.shape}, num_points:{num_points}, num_masks:{num_masks}, num_gt:{num_gt}')
+        bg_points = set(range(num_points))
+        matched_masks = set()
+        matched_points = set()
+
+        unmatched_gt = []
 
         # --- 遍历GT点 ---
         for j in range(num_gt):
             # 哪些预测点落在当前mask j
             if j >= inside_matrix.shape[0]:
+                unmatched_gt.append(j)
                 # print(f'Warning: j={j} exceeds inside_matrix shape {inside_matrix.shape}')
                 continue
             inside_points = inside_matrix[j].nonzero(as_tuple=True)[0]  # [K]
-            inside_points = [p for p in inside_points.tolist() if p in avaliable_points]
+            inside_points = [p for p in inside_points.tolist() if p in bg_points]
 
             if len(inside_points) == 0:
-                # 没有点 → 随机选一个最小距离
-                if not bg_points:
-                    continue
-                avail_list = list(bg_points)
-                dists = torch.cdist(U[avail_list], V[j].unsqueeze(0))[:, 0]  # 计算所有可用预测点与第j个GT点的欧式距离，结果为[len(avail_list), 1]，再取出第一维
-                min_idx = torch.argmin(dists).item() #找到距离GT点j最近的预测点在avail_list中的索引
-                u = avail_list[min_idx]
-                cost = dists[min_idx].item()
-                forced_pairs.append((u, j))
-                total_cost += cost
-                matched_points.add(u)
-                bg_points.remove(u)
+                # 没有点 → 先不处理
+                unmatched_gt.append(j)
             elif len(inside_points) == 1:
                 # 单点 → 直接匹配
                 u = inside_points[0]
@@ -170,10 +146,10 @@ class PointsMasksMatcher(nn.Module):
                 forced_pairs.append((u, j))
                 total_cost += cost
                 matched_points.add(u)
-                avaliable_points.remove(u)
+                matched_masks.add(j)
+                bg_points.remove(u)
             else:
                 # 多点 → 选最近的
-                # print(f'inside_points: {inside_points}')
                 subset = U[inside_points]  # [K, 2]
                 dists = torch.cdist(subset, V[j].unsqueeze(0))[:, 0]  # [K]
                 min_local = torch.argmin(dists).item()
@@ -182,15 +158,33 @@ class PointsMasksMatcher(nn.Module):
                 forced_pairs.append((u, j))
                 total_cost += cost
                 matched_points.add(u)
-                avaliable_points.remove(u)
-                other_points = [p for i, p in enumerate(inside_points) if i != min_local]
-                bg_points.update(other_points)  # 其他点放回背景点集合
+                matched_masks.add(j)
+                bg_points.remove(u)
 
-        matched_masks = {j for _, j in forced_pairs}
+        # Step3: 剩余的GT与背景点，用Hungarian最优匹配
+        if unmatched_gt and bg_points:
+            bg_list = list(bg_points)
+            U_bg = U[bg_list]
+            V_gt = V[unmatched_gt]
+
+            cost_matrix = torch.cdist(U_bg, V_gt)  # [Nb, Ng]
+
+            cost_np = cost_matrix.detach().cpu().numpy()
+            row_ind, col_ind = linear_sum_assignment(cost_np)
+
+            for r, c in zip(row_ind, col_ind):
+                u = bg_list[r]
+                j = unmatched_gt[c]
+                cost = cost_np[r, c]
+                if cost < 1e5:
+                    forced_pairs.append((u, j))
+                    total_cost += cost
+                    matched_points.add(u)
+                    matched_masks.add(j)
+                    bg_points.remove(u)
+
         unmatched_masks = list(set(range(num_masks)) - matched_masks)
 
-        # unmatched_masks = list(set(range(num_masks)) - {vj for _, vj in forced_pairs})
-        # print(f'matched_points shape:{len(matched_points)}, matched_masks shape:{len(matched_masks)}, unmatched_masks shape:{len(unmatched_masks)}')
         return forced_pairs, total_cost, unmatched_masks
     
     # ------------------- 辅助函数 -------------------
@@ -209,8 +203,8 @@ class PointsMasksMatcher(nn.Module):
         # # print(f'U_clamped min:{U_clamped.min()}, max:{U_clamped.max()}')
         # coords = (U_clamped * torch.tensor([H-1, W-1], device=U.device)).round().long()
         U_clone = U.clone()
-        U_clone[:, 0] *= H
-        U_clone[:, 1] *= W
+        U_clone[:, 0] *= W
+        U_clone[:, 1] *= H
         x = U_clone[:, 0]
         y = U_clone[:, 1]
 
@@ -224,9 +218,9 @@ class PointsMasksMatcher(nn.Module):
         # print(f'masks shape:{masks.shape}, x min:{x.min()}, x max:{x.max()}, y min:{y.min()}, y max:{y.max()}')
 
         # 4. 高级索引，计算每个点是否落在每个 mask 内
-        x_idx = x.round().long().clamp(0, H - 1)
-        y_idx = y.round().long().clamp(0, W - 1)
-        inside_matrix = masks[:, x_idx, y_idx] > 0  # [num_masks, num_points]
+        x_idx = x.round().long().clamp(0, W - 1)
+        y_idx = y.round().long().clamp(0, H - 1)
+        inside_matrix = masks[:, y_idx, x_idx] > 0  # [num_masks, num_points]
 
         return inside_matrix
     
