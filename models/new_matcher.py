@@ -104,6 +104,85 @@ class PointsMasksMatcher(nn.Module):
         
         return masks
     
+    # ------------------- TopK+贪心匹配逻辑 -------------------
+    def _match_single_topk_greedy(self, U: torch.Tensor, V: torch.Tensor, masks: torch.Tensor, K: int = 5):
+        """
+        基于 Top-K 候选 + 全局贪心分配的匹配策略（方案B）。
+        返回与 _match_single 一致：
+            forced_pairs: list of (u_idx, v_idx)
+            total_cost: float (匹配对的欧氏距离和)
+            unmatched_masks: list[int], 未匹配的 mask 索引
+        Args:
+            U: 预测点坐标 [P, 2] (归一化到 [0,1])
+            V: GT 点坐标 [G, 2]
+            masks: 掩码张量 [M, H, W] (bool)，前 G 行与 V 对应
+            K: 每个 GT 保留的候选预测点数
+        """
+        device = U.device
+        P = U.shape[0]
+        G = V.shape[0]
+        M = masks.shape[0]
+
+        if P == 0 or G == 0:
+            return [], 0.0, list(range(M))
+
+        # --- 1. inside_matrix: [M, P] (mask m vs point p) ---
+        H, W = masks.shape[1], masks.shape[2]
+        inside_matrix = self._find_points_in_masks(U, masks, H, W)  # [M, P]
+        if inside_matrix.shape[0] < G:
+            pad = torch.zeros((G - inside_matrix.shape[0], P), dtype=torch.bool, device=device)
+            inside_matrix = torch.cat([inside_matrix, pad], dim=0)
+        inside_gp = inside_matrix[:G, :]  # [G, P]
+
+        cand_dists = []
+        cand_pidx = []
+        cand_gidx = []
+
+        # --- 2. 为每个 GT 选择 top-K 候选点 ---
+        for g in range(G):
+            pts_idx = torch.nonzero(inside_gp[g], as_tuple=True)[0]  # mask g 内的候选点索引
+            if pts_idx.numel() == 0:
+                continue  # mask 内没有预测点 -> unmatched
+            diff = U[pts_idx] - V[g].unsqueeze(0)  # [n_g, 2]
+            d = torch.norm(diff, dim=1)  # [n_g]
+            k = min(K, d.shape[0])
+            vals, idxs = torch.topk(d, k=k, largest=False)  # 取前k个最小距离
+            sel_pts = pts_idx[idxs]  # 预测点索引
+            cand_dists.append(vals)
+            cand_pidx.append(sel_pts)
+            cand_gidx.append(torch.full((k,), g, dtype=torch.long, device=device))
+
+        if len(cand_dists) == 0:
+            # 所有 GT 都没有候选 -> 全部 unmatched
+            return [], 0.0, list(range(M))
+
+        cand_dists = torch.cat(cand_dists)  # [N_candidates]
+        cand_pidx = torch.cat(cand_pidx)
+        cand_gidx = torch.cat(cand_gidx)
+
+        # --- 3. 按距离排序并贪心分配 ---
+        order = torch.argsort(cand_dists)  # 从小到大排序
+        used_points = torch.zeros((P,), dtype=torch.bool, device=device)
+        used_gts = torch.zeros((G,), dtype=torch.bool, device=device)
+        forced_pairs = []
+        total_cost = 0.0
+
+        for idx in order.tolist():
+            p = int(cand_pidx[idx].item())
+            g = int(cand_gidx[idx].item())
+            if not used_points[p] and not used_gts[g]:
+                forced_pairs.append((p, g))
+                total_cost += float(cand_dists[idx].item())
+                used_points[p] = True
+                used_gts[g] = True
+
+        # --- 4. 统计未匹配的 mask ---
+        matched_masks = {g for _, g in forced_pairs}
+        unmatched_masks = list(set(range(M)) - matched_masks)
+
+        return forced_pairs, total_cost, unmatched_masks
+
+    
     # ------------------- 单样本匹配逻辑 -------------------
     def _match_single(self, U, V, masks):
         N, H, W = masks.shape
@@ -161,7 +240,7 @@ class PointsMasksMatcher(nn.Module):
                 matched_masks.add(j)
                 bg_points.remove(u)
 
-        # Step3: 剩余的GT与背景点，用Hungarian最优匹配
+        # Step3: 剩余的GT与背景点，用hoo
         if unmatched_gt and bg_points:
             bg_list = list(bg_points)
             U_bg = U[bg_list]
@@ -203,8 +282,8 @@ class PointsMasksMatcher(nn.Module):
         # # print(f'U_clamped min:{U_clamped.min()}, max:{U_clamped.max()}')
         # coords = (U_clamped * torch.tensor([H-1, W-1], device=U.device)).round().long()
         U_clone = U.clone()
-        U_clone[:, 0] *= W
-        U_clone[:, 1] *= H
+        U_clone[:, 0] *= H
+        U_clone[:, 1] *= W
         x = U_clone[:, 0]
         y = U_clone[:, 1]
 
@@ -218,9 +297,9 @@ class PointsMasksMatcher(nn.Module):
         # print(f'masks shape:{masks.shape}, x min:{x.min()}, x max:{x.max()}, y min:{y.min()}, y max:{y.max()}')
 
         # 4. 高级索引，计算每个点是否落在每个 mask 内
-        x_idx = x.round().long().clamp(0, W - 1)
-        y_idx = y.round().long().clamp(0, H - 1)
-        inside_matrix = masks[:, y_idx, x_idx] > 0  # [num_masks, num_points]
+        x_idx = x.round().long().clamp(0, H - 1)
+        y_idx = y.round().long().clamp(0, W - 1)
+        inside_matrix = masks[:, x_idx, y_idx] > 0  # [num_masks, num_points]
 
         return inside_matrix
     

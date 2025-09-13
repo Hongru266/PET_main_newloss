@@ -159,11 +159,11 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         # record results
         results = {}
         toTensor = lambda x: torch.tensor(x).float().cuda()
-        results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
-        metric_logger.update(mae=results['mae'], mse=results['mse'])
+        results['mae'], results['rmse'] = toTensor(mae), toTensor(mse)
+        metric_logger.update(mae=results['mae'], rmse=results['rmse'])
 
         results_reduced = utils.reduce_dict(results)
-        metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
+        metric_logger.update(mae=results_reduced['mae'], rmse=results_reduced['rmse'])
 
         # visualize predictions
         if vis_dir: 
@@ -174,5 +174,5 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    results['mse'] = np.sqrt(results['mse'])
+    results['rmse'] = np.sqrt(results['rmse'])
     return results
