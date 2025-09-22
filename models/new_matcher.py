@@ -55,6 +55,7 @@ class PointsMasksMatcher(nn.Module):
             # N, H, W = new_masks.shape
 
             forced_pairs, total_cost, unmatched_masks = self._match_single(U, V, new_masks)
+            # forced_pairs, total_cost, unmatched_masks = self._match_single_topk_greedy(U, V, new_masks)
             # print(f'Batch {b}: forced_pairs={forced_pairs}, total_cost={total_cost}, unmatched_masks={unmatched_masks}')
 
             results.append({
@@ -105,18 +106,21 @@ class PointsMasksMatcher(nn.Module):
         return masks
     
     # ------------------- TopK+贪心匹配逻辑 -------------------
-    def _match_single_topk_greedy(self, U: torch.Tensor, V: torch.Tensor, masks: torch.Tensor, K: int = 5):
+    def _match_single_topk_greedy(self, U: torch.Tensor, V: torch.Tensor, masks: torch.Tensor, K: int = 20, mask_dilate: int = 2, use_strict: bool = False ):
         """
-        基于 Top-K 候选 + 全局贪心分配的匹配策略（方案B）。
+        基于 Top-K 候选 + 全局贪心分配的匹配策略（改进版）。
         返回与 _match_single 一致：
             forced_pairs: list of (u_idx, v_idx)
             total_cost: float (匹配对的欧氏距离和)
             unmatched_masks: list[int], 未匹配的 mask 索引
+
         Args:
             U: 预测点坐标 [P, 2] (归一化到 [0,1])
             V: GT 点坐标 [G, 2]
             masks: 掩码张量 [M, H, W] (bool)，前 G 行与 V 对应
             K: 每个 GT 保留的候选预测点数
+            mask_dilate: mask 膨胀半径（像素），训练初期允许 mask 外的点也进入候选
+            use_strict: 是否严格只用 mask 内点（后期切换为 True）
         """
         device = U.device
         P = U.shape[0]
@@ -126,12 +130,25 @@ class PointsMasksMatcher(nn.Module):
         if P == 0 or G == 0:
             return [], 0.0, list(range(M))
 
-        # --- 1. inside_matrix: [M, P] (mask m vs point p) ---
         H, W = masks.shape[1], masks.shape[2]
+
+        # --- 1. inside_matrix: [M, P] (mask vs point) ---
         inside_matrix = self._find_points_in_masks(U, masks, H, W)  # [M, P]
         if inside_matrix.shape[0] < G:
             pad = torch.zeros((G - inside_matrix.shape[0], P), dtype=torch.bool, device=device)
             inside_matrix = torch.cat([inside_matrix, pad], dim=0)
+
+        # 【修改4】可选的 mask 膨胀逻辑
+        if not use_strict and mask_dilate > 0:
+            # 先把 mask 膨胀，再重新计算 inside_matrix
+            kernel = torch.ones((1, 1, 2*mask_dilate+1, 2*mask_dilate+1), device=device)
+            dilated = F.conv2d(masks.unsqueeze(1).float(), kernel, padding=mask_dilate)
+            dilated = (dilated > 0).squeeze(1)  # [M,H,W]
+            inside_matrix = self._find_points_in_masks(U, dilated, H, W)
+            if inside_matrix.shape[0] < G:
+                pad = torch.zeros((G - inside_matrix.shape[0], P), dtype=torch.bool, device=device)
+                inside_matrix = torch.cat([inside_matrix, pad], dim=0)
+
         inside_gp = inside_matrix[:G, :]  # [G, P]
 
         cand_dists = []
@@ -240,7 +257,7 @@ class PointsMasksMatcher(nn.Module):
                 matched_masks.add(j)
                 bg_points.remove(u)
 
-        # Step3: 剩余的GT与背景点，用hoo
+        # Step3: 剩余的GT与背景点，用hungarian 匹配
         if unmatched_gt and bg_points:
             bg_list = list(bg_points)
             U_bg = U[bg_list]

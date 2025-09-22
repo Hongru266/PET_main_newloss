@@ -10,13 +10,16 @@ from scipy.io import savemat
 # Preprocess UCF-QNRF dataset
 def process_ucf_qnrf(data_root, down_size=1536):
 
-    def load_data(img_gt_path, down_size):
+    def load_data(img_gt_dict_mask_path, down_size):
         # load image and annotation
-        img_path, gt_path = img_gt_path
+        img_path, gt_path, dict_path, mask_path = img_gt_dict_mask_path
         img = cv2.imread(img_path)
         img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
         anno = io.loadmat(gt_path)
         points = anno["annPoints"]
+        with open(dict_path, 'r', encoding='utf-8') as f:
+            dicts = json.load(f)
+        masks = np.load(mask_path)
 
         # scale image and annotation
         maxH = maxW = down_size
@@ -26,7 +29,22 @@ def process_ucf_qnrf(data_root, down_size=1536):
         factor = maxf if maxf > 1.0 else 1.0
         img = img.resize((int(img_w / factor), int(img_h / factor)))
         points = points / factor
-        return img, points, anno
+        masks = cv2.resize(
+            masks, 
+            (int(img_w / factor), int(img_h / factor)), 
+            interpolation=cv2.INTER_NEAREST
+        )
+        dicts = {key: (coord[0] / factor, coord[1] / factor) if isinstance(coord, (tuple, list)) and len(coord) >= 2 else coord for key, coord in dicts.items()}
+        # dicts = dicts / factor
+        return img, points, dicts, masks, anno
+    
+    def find_file_case_insensitive(path):
+        dir_name = os.path.dirname(path)
+        base_name = os.path.basename(path).lower()
+        for fname in os.listdir(dir_name):
+            if fname.lower() == base_name:
+                return os.path.join(dir_name, fname)
+        raise FileNotFoundError(f"File not found (case-insensitive): {path}")
     
     img_quality = 100    # image quality
     new_data_root = f"./data/UCF-QNRF_{down_size}"
@@ -38,18 +56,31 @@ def process_ucf_qnrf(data_root, down_size=1536):
         img_list = os.listdir(f"{data_root}/{split}")
         img_list = [img for img in img_list if ".jpg" in img]
         gt_list = {}
+        dict_list = {}
+        mask_list = {}
         for img_name in img_list:
             img_path = f"{data_root}/{split}/{img_name}"
             gt_list[img_path] = img_path.replace(".jpg", "_ann.mat")
+            dict_list[img_path] = img_path.replace(".jpg", ".json").replace(f"{data_root}/{split}", f"{data_root}/dict")
+            mask_list[img_path] = img_path.replace(".jpg", ".npy").replace(f"{data_root}/{split}", f"{data_root}/masks")
         img_list = sorted(list(gt_list.keys()))
+        # dict_list = sorted(list(dict_list.keys()))
+        # mask_list = sorted(list(mask_list.keys()))
 
         for img_path in img_list:
             gt_path = gt_list[img_path]
-            img, points, anno = load_data((img_path, gt_path), down_size)
+            dict_path = dict_list[img_path]
+            mask_path = mask_list[img_path]
+
+            dict_path = find_file_case_insensitive(dict_path)
+            mask_path = find_file_case_insensitive(mask_path)
+            img, points, dicts, masks, anno = load_data((img_path, gt_path, dict_path, mask_path), down_size)
 
             # new data path
             new_img_path = img_path.replace(data_root, new_data_root)
             new_gt_path = gt_list[img_path].replace(data_root, new_data_root)
+            new_dict_path = dict_path.replace(data_root, new_data_root)
+            new_mask_path = mask_path.replace(data_root, new_data_root)
             save_dir = '/'.join(new_img_path.split('/')[:-1])
             os.makedirs(save_dir, exist_ok=True)
 
@@ -57,6 +88,11 @@ def process_ucf_qnrf(data_root, down_size=1536):
             img.save(new_img_path, quality=img_quality)
             anno["annPoints"] = points
             savemat(new_gt_path, anno)
+            os.makedirs(os.path.dirname(new_dict_path), exist_ok=True)  # 新增，确保目录存在
+            os.makedirs(os.path.dirname(new_mask_path), exist_ok=True)  # 新增，确保目录存在
+            with open(new_dict_path, 'w') as f:
+                json.dump(dicts, f)
+            np.save(new_mask_path, masks)
 
             print("save to ", new_img_path)
 
@@ -214,7 +250,8 @@ if __name__ == '__main__':
 
     # UCF_QNRF | JHU_Crowd | NWPU_Crowd
     dataset = "UCF_QNRF"
-    data_root = "your_data_path"
+    # data_root = "your_data_path"
+    data_root = "./data/UCF-QNRF"
     
     if dataset == "UCF_QNRF":
         down_size = 1536    # downsample size

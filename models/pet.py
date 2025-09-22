@@ -10,6 +10,7 @@ from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
 
 from .matcher import build_matcher
 from .new_matcher import build_new_matcher
+from .matcher_0915 import build_0915_matcher
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
@@ -515,6 +516,48 @@ class SetCriterion(nn.Module):
         
         return losses
 
+    def loss_masks(self, outputs, targets, indices, num_points, **kwargs):
+        """
+        Mask-aware point-to-region loss:
+        - 如果预测点在掩码内: 使用归一化距离 [0,1]
+        - 如果预测点在掩码外: 给大惩罚 (近似 ∞)
+        """
+        assert 'pred_points' in outputs
+        idx = self._get_src_permutation_idx(indices)
+        src_points = outputs['pred_points'][idx]  # [num_matched, 2]
+        target_points = torch.cat([t['points'][j] for t, (_, j) in zip(targets, indices)], dim=0)
+
+        img_h, img_w = outputs['img_shape']
+        target_points_norm = target_points.clone()
+        target_points_norm[:, 0] /= img_h
+        target_points_norm[:, 1] /= img_w
+
+        # --- Step 1: 欧式距离 ---
+        dist = torch.norm(src_points - target_points_norm, dim=1)  # [num_matched]
+
+        # --- Step 2: 掩码约束 ---
+        losses = []
+        for b, (tgt, (_, j)) in enumerate(zip(targets, indices)):
+            mask = tgt['masks'].float()  # [H, W] 0/1
+            ys, xs = src_points[:,0] * img_h, src_points[:,1] * img_w  # 恢复到像素坐标
+            xs = xs.long().clamp(0, mask.shape[1]-1)
+            ys = ys.long().clamp(0, mask.shape[0]-1)
+
+            inside = mask[ys, xs] > 0.5
+            # 归一化: 掩码内最大可能距离 (mask 半径或 bbox 对角线)
+            max_dist = torch.sqrt(torch.tensor(mask.shape[0]**2 + mask.shape[1]**2, 
+                                            device=mask.device, dtype=torch.float32))
+            norm_dist = dist / (max_dist + 1e-6)
+
+            # 掩码外 → 大惩罚
+            loss = torch.where(inside, norm_dist, torch.tensor(10.0, device=dist.device))
+            losses.append(loss)
+
+        loss_masks = torch.cat(losses).mean()
+        return {'loss_masks': loss_masks}
+
+
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         # print(f'indices length inside criterion: {len(indices)}')
@@ -534,6 +577,7 @@ class SetCriterion(nn.Module):
         loss_map = {
             'labels': self.loss_labels,
             'points': self.loss_points,
+            'masks': self.loss_masks,
         }
         assert loss in loss_map, f'{loss} loss is not defined'
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)
@@ -601,9 +645,12 @@ def build_pet(args):
 
     # build loss criterion
     # matcher = build_matcher(args)
-    matcher = build_new_matcher(args)
-    weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
-    losses = ['labels', 'points']
+    # matcher = build_new_matcher(args)
+    matcher = build_0915_matcher(args)
+    weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef, 'loss_masks': args.mask_loss_coef}
+    # weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
+    losses = ['labels', 'points', 'masks']
+    # losses = ['labels', 'points']
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              eos_coef=args.eos_coef, losses=losses)
     criterion.to(device)

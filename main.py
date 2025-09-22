@@ -23,9 +23,9 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Set Point Query Transformer', add_help=False)
 
     # training Parameters
-    parser.add_argument('--lr', default=5e-4, type=float)
+    parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
-    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--batch_size', default=4, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
@@ -55,15 +55,18 @@ def get_args_parser():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--set_cost_point', default=0.05, type=float,
                         help="SmoothL1 point coefficient in the matching cost")
+    parser.add_argument('--set_cost_mask', default=1.0, type=float,
+                        help="Mask coefficient in the matching cost")
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
+    parser.add_argument('--mask_loss_coef', default=1.0, type=float)
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default="SHA")
-    parser.add_argument('--data_path', default="./data/ShanghaiTech/PartA", type=str)
+    parser.add_argument('--dataset_file', default="UCF")
+    parser.add_argument('--data_path', default="./data/UCF-QNRF", type=str)
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -155,6 +158,7 @@ def main(args):
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             start_epoch = checkpoint['epoch'] + 1
+            args.start_epoch = start_epoch  # 加上这一句
             if 'best_mae' in checkpoint:
                 best_mae = checkpoint['best_mae']
             if 'bestrmse' in checkpoint:
@@ -165,7 +169,7 @@ def main(args):
 
 
     # 检查自动checkpoint目录
-    ckpt_dir_name = f"{args.output_dir}_{args.lr}_{args.batch_size}_0910_try1"
+    ckpt_dir_name = f"{args.output_dir}_{args.lr}_{args.batch_size}_0922_try1_matcher0915_maskLoss"
     # ckpt_dir_name += f"{args.bce_loss_coef}_{args.smoothl1_loss_coef}_0908_try1"
     args.ckpt_dir = os.path.join("checkpoints", args.dataset_file, ckpt_dir_name)
     # 如果没有命令行指定的resume路径，则尝试从自动保存目录恢复
@@ -180,6 +184,7 @@ def main(args):
                 optimizer.load_state_dict(checkpoint['optimizer'])
                 lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
                 start_epoch = checkpoint.get('epoch', 0) + 1
+                args.start_epoch = start_epoch  # 加上这一句
                 if 'best_mae' in checkpoint:
                     best_mae = checkpoint['best_mae']
                 if 'best_rmse' in checkpoint:
@@ -213,21 +218,21 @@ def main(args):
             log_file.write("parameters: {}".format(n_parameters))
 
     # resume
-    best_mae, best_rmse,  best_epoch = 1e8, 1e8, 0
-    if args.resume:
-        if args.resume.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.resume, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.resume, map_location='cpu')
-        model_without_ddp.load_state_dict(checkpoint['model'])
-        if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            args.start_epoch = checkpoint.get('epoch', 0) + 1
-            best_mae = checkpoint['best_mae']
-            best_epoch = checkpoint['best_epoch']
-            best_rmse = checkpoint['best_rmse']
+    # best_mae, best_rmse,  best_epoch = 1e8, 1e8, 0
+    # if args.resume:
+    #     if args.resume.startswith('https'):
+    #         checkpoint = torch.hub.load_state_dict_from_url(
+    #             args.resume, map_location='cpu', check_hash=True)
+    #     else:
+    #         checkpoint = torch.load(args.resume, map_location='cpu')
+    #     model_without_ddp.load_state_dict(checkpoint['model'])
+    #     if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
+    #         optimizer.load_state_dict(checkpoint['optimizer'])
+    #         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    #         args.start_epoch = checkpoint.get('epoch', 0) + 1
+    #         best_mae = checkpoint['best_mae']
+    #         best_epoch = checkpoint['best_epoch']
+    #         best_rmse = checkpoint['best_rmse']
 
     # training
     print("Start training")
@@ -283,13 +288,14 @@ def main(args):
             if mae < best_mae:
                 best_epoch = epoch
                 best_mae = mae
+                best_rmse = rmse
             print("\n==========================")
             print("\nepoch:", epoch, "mae:", mae, "rmse:", rmse, "\n\nbest mae:", best_mae, "best epoch:", best_epoch)
             print("==========================\n")
             if utils.is_main_process():
                 with open(run_log_name, "a") as log_file:
-                    log_file.write("\nepoch:{}, mae:{}, rmse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n\n".format(
-                                                epoch, mae, rmse, t2 - t1, best_mae, best_epoch))
+                    log_file.write("\nepoch:{}, mae:{}, rmse:{}, time{}, \n\nbest mae:{}, best rmse:{}, best epoch: {}\n\n".format(
+                                                epoch, mae, rmse, t2 - t1, best_mae, best_rmse, best_epoch))
                                                 
             # save best checkpoint
             if mae == best_mae and utils.is_main_process():

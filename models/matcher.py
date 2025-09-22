@@ -63,6 +63,8 @@ class HungarianMatcher(nn.Module):
         cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
         # final cost matrix
+        # print(f'out_prob shape:{out_prob.shape}, tgt_ids shape:{tgt_ids.shape}')
+        # print(f'cost_point shape: {cost_point.shape}, cost_class shape: {cost_class.shape}')
         C = self.cost_point * cost_point + self.cost_class * cost_class
         C = C.view(bs, num_queries, -1).cpu()
 
