@@ -553,7 +553,10 @@ class SetCriterion(nn.Module):
             loss = torch.where(inside, norm_dist, torch.tensor(10.0, device=dist.device))
             losses.append(loss)
 
-        loss_masks = torch.cat(losses).mean()
+        if len(losses) == 0 or torch.cat(losses).numel() == 0:
+            loss_masks = torch.tensor(0.0, device=src_points.device)
+        else:
+            loss_masks = torch.cat(losses).mean()
         return {'loss_masks': loss_masks}
 
 

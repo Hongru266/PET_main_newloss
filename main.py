@@ -25,7 +25,7 @@ def get_args_parser():
     # training Parameters
     parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
-    parser.add_argument('--batch_size', default=4, type=int)
+    parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
@@ -65,8 +65,10 @@ def get_args_parser():
                         help="Relative classification weight of the no-object class")
 
     # dataset parameters
-    parser.add_argument('--dataset_file', default="UCF")
-    parser.add_argument('--data_path', default="./data/UCF-QNRF", type=str)
+    # parser.add_argument('--dataset_file', default="UCF")
+    parser.add_argument('--dataset_file', default="SHA")
+    # parser.add_argument('--data_path', default="./data/UCF-QNRF", type=str)
+    parser.add_argument('--data_path', default="./data/ShanghaiTech/partA", type=str)
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -161,7 +163,7 @@ def main(args):
             args.start_epoch = start_epoch  # 加上这一句
             if 'best_mae' in checkpoint:
                 best_mae = checkpoint['best_mae']
-            if 'bestrmse' in checkpoint:
+            if 'best_rmse' in checkpoint:
                 best_rmse = checkpoint['best_rmse']
             if 'best_epoch' in checkpoint:
                 best_epoch = checkpoint['best_epoch']
