@@ -65,10 +65,10 @@ def get_args_parser():
                         help="Relative classification weight of the no-object class")
 
     # dataset parameters
-    # parser.add_argument('--dataset_file', default="UCF")
-    parser.add_argument('--dataset_file', default="SHA")
-    # parser.add_argument('--data_path', default="./data/UCF-QNRF", type=str)
-    parser.add_argument('--data_path', default="./data/ShanghaiTech/partA", type=str)
+    parser.add_argument('--dataset_file', default="UCF")
+    # parser.add_argument('--dataset_file', default="SHA")
+    parser.add_argument('--data_path', default="./data/UCF-QNRF", type=str)
+    # parser.add_argument('--data_path', default="./data/ShanghaiTech/partA", type=str)
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -171,20 +171,22 @@ def main(args):
 
 
     # 检查自动checkpoint目录
-    ckpt_dir_name = f"{args.output_dir}_{args.lr}_{args.batch_size}_0922_try1_matcher0915_maskLoss"
+    ckpt_dir_name = f"{args.output_dir}_{args.lr}_{args.batch_size}_1004_try1_UCFpth_matcher0915_maskLoss"
     # ckpt_dir_name += f"{args.bce_loss_coef}_{args.smoothl1_loss_coef}_0908_try1"
     args.ckpt_dir = os.path.join("checkpoints", args.dataset_file, ckpt_dir_name)
     # 如果没有命令行指定的resume路径，则尝试从自动保存目录恢复
     if not args.resume and os.path.exists(args.ckpt_dir):
+        print(f"尝试从自动保存目录恢复训练: {args.ckpt_dir}")
         # output_dir = os.path.join("./outputs", args.dataset_file, args.output_dir)
         # ckpt_path = os.path.join(output_dir, "checkpoint.pth")
-        ckpt_path = os.path.join(args.ckpt_dir, "checkpoint.pth")
+        # ckpt_path = os.path.join(args.ckpt_dir, "checkpoint.pth")
+        ckpt_path = "UCF_QNRF.pth"
         if os.path.isfile(ckpt_path):
             try:
                 checkpoint = torch.load(ckpt_path, map_location='cpu')
                 model_without_ddp.load_state_dict(checkpoint['model'])
-                optimizer.load_state_dict(checkpoint['optimizer'])
-                lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+                # optimizer.load_state_dict(checkpoint['optimizer'])
+                # lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
                 start_epoch = checkpoint.get('epoch', 0) + 1
                 args.start_epoch = start_epoch  # 加上这一句
                 if 'best_mae' in checkpoint:
@@ -268,6 +270,7 @@ def main(args):
                 'args': args,
                 'best_mae': best_mae,
                 'best_rmse': best_rmse,
+                'best_epoch': best_epoch,
             }, checkpoint_path)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
@@ -290,6 +293,7 @@ def main(args):
             if mae < best_mae:
                 best_epoch = epoch
                 best_mae = mae
+            if rmse < best_rmse:
                 best_rmse = rmse
             print("\n==========================")
             print("\nepoch:", epoch, "mae:", mae, "rmse:", rmse, "\n\nbest mae:", best_mae, "best epoch:", best_epoch)

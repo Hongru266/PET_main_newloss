@@ -11,6 +11,7 @@ from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
 from .matcher import build_matcher
 from .new_matcher import build_new_matcher
 from .matcher_0915 import build_0915_matcher
+from .matcher_0929 import build_0929_matcher
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
@@ -560,6 +561,38 @@ class SetCriterion(nn.Module):
         return {'loss_masks': loss_masks}
 
 
+    # def loss_masks(self, outputs, targets, indices, num_points, **kwargs):
+    #     """
+    #     Mask supervision loss (分布式):
+    #     - 掩码内像素值总和应接近 1，掩码外接近 0
+    #     - 相当于预测掩码学习一个 one-hot 分布
+    #     - 用 MSE loss 约束预测与归一化 GT 掩码
+    #     """
+    #     assert 'pred_logits' in outputs
+    #     pred_masks = outputs['pred_logits']  # [B, C, H, W]
+    #     B, H, W = pred_masks.shape
+
+    #     # --- 构造 target masks ---
+    #     target_masks = []
+    #     for tgt in targets:
+    #         mask = tgt['masks'].float()  # [H, W] 0/1
+    #         if mask.shape[0] != H or mask.shape[1] != W:
+    #             mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0),
+    #                                 size=(H, W), mode='nearest').squeeze(0).squeeze(0)
+
+    #         # 归一化：掩码内像素和=1，掩码外=0
+    #         if mask.sum() > 0:
+    #             mask = mask / mask.sum()
+    #         target_masks.append(mask)
+
+    #     target_masks = torch.stack(target_masks, dim=0).unsqueeze(1)  # [B, 1, H, W]
+
+    #     # --- loss: 分布对齐 (MSE) ---
+    #     loss_masks = F.mse_loss(pred_masks, target_masks)
+
+    #     return {'loss_masks': loss_masks}
+
+
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
@@ -647,13 +680,14 @@ def build_pet(args):
     )
 
     # build loss criterion
-    # matcher = build_matcher(args)
+    matcher = build_matcher(args)
     # matcher = build_new_matcher(args)
-    matcher = build_0915_matcher(args)
-    weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef, 'loss_masks': args.mask_loss_coef}
-    # weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
-    losses = ['labels', 'points', 'masks']
-    # losses = ['labels', 'points']
+    # matcher = build_0915_matcher(args)
+    # matcher = build_0929_matcher(args)
+    # weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef, 'loss_masks': args.mask_loss_coef}
+    weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
+    # losses = ['labels', 'points', 'masks']
+    losses = ['labels', 'points']
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              eos_coef=args.eos_coef, losses=losses)
     criterion.to(device)
