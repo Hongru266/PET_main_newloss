@@ -680,14 +680,14 @@ def build_pet(args):
     )
 
     # build loss criterion
-    matcher = build_matcher(args)
+    # matcher = build_matcher(args)
     # matcher = build_new_matcher(args)
-    # matcher = build_0915_matcher(args)
+    matcher = build_0915_matcher(args)
     # matcher = build_0929_matcher(args)
-    # weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef, 'loss_masks': args.mask_loss_coef}
-    weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
-    # losses = ['labels', 'points', 'masks']
-    losses = ['labels', 'points']
+    weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef, 'loss_masks': args.mask_loss_coef}
+    # weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
+    losses = ['labels', 'points', 'masks']
+    # losses = ['labels', 'points']
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              eos_coef=args.eos_coef, losses=losses)
     criterion.to(device)
