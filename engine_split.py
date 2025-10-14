@@ -16,7 +16,8 @@ import util.misc as utils
 from util.misc import NestedTensor
 
 import json
-
+from collections import defaultdict
+import re
 
 class DeNormalize(object):
     def __init__(self, mean, std):
@@ -138,14 +139,15 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
     if vis_dir is not None:
         os.makedirs(vis_dir, exist_ok=True)
-    # with open('./data/UCF-QNRF/Test_split/info.json', 'r', encoding='utf-8') as f:
-    #     info = json.load(f)
+    with open('./data/UCF-QNRF/Test_split/info.json', 'r', encoding='utf-8') as f:
+        info = json.load(f)
+    # patch_to_orig = {entry['patch_id']: entry['orig_img_id'] for entry in info_list}
 
-    # # 存储 patch 级结果
-    # patch_pred_counts = {}
-    # patch_gt_counts = {}
+    # 存储 patch 级结果
+    patch_pred_counts = {}
+    patch_gt_counts = {}
 
-    print_freq = 10
+    print_freq = 1000
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         img_h, img_w = samples.tensors.shape[-2:]
@@ -160,9 +162,45 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         predict_cnt = len(outputs_scores)
         gt_cnt = targets[0]['points'].shape[0]
 
-        # compute error
-        mae = abs(predict_cnt - gt_cnt)
-        mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
+        # ===== 3. 获取 patch 文件名 =====
+        # 假设 dataset 返回 targets[0]['image_name']（如 'img_0001_003.jpg'）
+        patch_img_name = targets[0]['image_path'].split('/')[-1]  # 仅文件名部分
+        # numbers = re.findall(r'\d+', patch_img_name)
+        # number = int(numbers[0]) - 1  # 提取第一个数字并转为整数
+        # print(f"image_path:{targets[0]['image_path']}, Processing patch image: {patch_img_name}, predicted count: {predict_cnt}, gt count: {gt_cnt}")
+
+        # ===== 4. 保存 patch 级结果 =====
+        patch_pred_counts[patch_img_name] = predict_cnt
+        patch_gt_counts[patch_img_name] = gt_cnt
+    
+    print(f"Total patches: {len(patch_pred_counts)}, length of patch_gt_counts: {len(patch_gt_counts)}")
+    # ===== 6. 聚合到原图级 =====
+    pred_sum = defaultdict(float)
+    gt_sum = defaultdict(float)
+
+    for patch_name, pred_cnt in patch_pred_counts.items():
+        # print(f'patch_name: {patch_name}, pred_cnt: {pred_cnt}')
+        numbers = re.findall(r'\d+', patch_name)
+        number = int(numbers[0]) - 1  # 提取第一个数字并转为整数
+        # if numbers not in info['patch_id']:
+        #     print(f"⚠️ Warning: {patch_name} not found in info.json")
+        #     continue
+
+        orig_name = info[number]['orig_img_name']
+        gt_cnt = info[number]['num_gt_points']
+        # orig_name = patch_to_orig[int(numbers[0])]
+        # print(f"patch_name: {patch_name}, orig_name: {orig_name}, number: {number}")
+        # gt_cnt = patch_gt_counts.get(patch_name, info[number]['num_gt_points'])
+        pred_sum[orig_name] += pred_cnt
+        gt_sum[orig_name] += gt_cnt
+
+    print(f"Total original images: {len(gt_sum)}, length of pred_sum: {len(pred_sum)}")
+
+
+    for orig_name in gt_sum.keys():
+        diff = pred_sum[orig_name] - gt_sum[orig_name]
+        mae=abs(diff)
+        mse=diff ** 2
 
         # record results
         results = {}

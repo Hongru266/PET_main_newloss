@@ -23,7 +23,7 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Set Point Query Transformer', add_help=False)
 
     # training Parameters
-    parser.add_argument('--lr', default=5e-5, type=float)
+    parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
@@ -67,7 +67,7 @@ def get_args_parser():
     # dataset parameters
     parser.add_argument('--dataset_file', default="UCF")
     # parser.add_argument('--dataset_file', default="SHA")
-    parser.add_argument('--data_path', default="./data/UCF-QNRF", type=str)
+    parser.add_argument('--data_path', default="./data/UCF-QNRF_1536", type=str)
     # parser.add_argument('--data_path', default="./data/ShanghaiTech/partA", type=str)
 
     # misc parameters
@@ -171,7 +171,7 @@ def main(args):
 
 
     # 检查自动checkpoint目录
-    ckpt_dir_name = f"{args.output_dir}_{args.lr}_{args.batch_size}_1004_try1_UCFpth_matcher0915_maskLoss"
+    ckpt_dir_name = f"{args.output_dir}_{args.lr}_{args.batch_size}_1010_try1_matcher0915_newMaskLoss(P2R,iou)"
     # ckpt_dir_name += f"{args.bce_loss_coef}_{args.smoothl1_loss_coef}_0908_try1"
     args.ckpt_dir = os.path.join("checkpoints", args.dataset_file, ckpt_dir_name)
     # 如果没有命令行指定的resume路径，则尝试从自动保存目录恢复
@@ -179,8 +179,8 @@ def main(args):
         print(f"尝试从自动保存目录恢复训练: {args.ckpt_dir}")
         # output_dir = os.path.join("./outputs", args.dataset_file, args.output_dir)
         # ckpt_path = os.path.join(output_dir, "checkpoint.pth")
-        # ckpt_path = os.path.join(args.ckpt_dir, "checkpoint.pth")
-        ckpt_path = "UCF_QNRF.pth"
+        ckpt_path = os.path.join(args.ckpt_dir, "checkpoint.pth")
+        # ckpt_path = "UCF_QNRF.pth"
         if os.path.isfile(ckpt_path):
             try:
                 checkpoint = torch.load(ckpt_path, map_location='cpu')

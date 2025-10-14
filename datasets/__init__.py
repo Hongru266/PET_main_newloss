@@ -7,7 +7,7 @@ from .UCF import build as build_ucf
 
 data_path = {
     'SHA': './data/ShanghaiTech/part_A/',
-    'UCF': './data/UCF-QNRF',
+    'UCF': './data/UCF-QNRF_1536',
 }
 
 def build_dataset(image_set, args):

@@ -517,80 +517,142 @@ class SetCriterion(nn.Module):
         
         return losses
 
-    def loss_masks(self, outputs, targets, indices, num_points, **kwargs):
+    # def loss_masks(self, outputs, targets, indices, num_points, **kwargs):
+    #     """
+    #     Mask-aware point-to-region loss:
+    #     - 如果预测点在掩码内: 使用归一化距离 [0,1]
+    #     - 如果预测点在掩码外: 给大惩罚 (近似 ∞)
+    #     """
+    #     assert 'pred_points' in outputs
+    #     idx = self._get_src_permutation_idx(indices)
+    #     src_points = outputs['pred_points'][idx]  # [num_matched, 2]
+    #     target_points = torch.cat([t['points'][j] for t, (_, j) in zip(targets, indices)], dim=0)
+
+    #     img_h, img_w = outputs['img_shape']
+    #     target_points_norm = target_points.clone()
+    #     target_points_norm[:, 0] /= img_h
+    #     target_points_norm[:, 1] /= img_w
+
+    #     # --- Step 1: 欧式距离 ---
+    #     dist = torch.norm(src_points - target_points_norm, dim=1)  # [num_matched]
+
+    #     # --- Step 2: 掩码约束 ---
+    #     losses = []
+    #     for b, (tgt, (_, j)) in enumerate(zip(targets, indices)):
+    #         mask = tgt['masks'].float()  # [H, W] 0/1
+    #         ys, xs = src_points[:,0] * img_h, src_points[:,1] * img_w  # 恢复到像素坐标
+    #         xs = xs.long().clamp(0, mask.shape[1]-1)
+    #         ys = ys.long().clamp(0, mask.shape[0]-1)
+
+    #         inside = mask[ys, xs] > 0.5
+    #         # 归一化: 掩码内最大可能距离 (mask 半径或 bbox 对角线)
+    #         max_dist = torch.sqrt(torch.tensor(mask.shape[0]**2 + mask.shape[1]**2, 
+    #                                         device=mask.device, dtype=torch.float32))
+    #         norm_dist = dist / (max_dist + 1e-6)
+
+    #         # 掩码外 → 大惩罚
+    #         loss = torch.where(inside, norm_dist, torch.tensor(10.0, device=dist.device))
+    #         losses.append(loss)
+
+    #     if len(losses) == 0 or torch.cat(losses).numel() == 0:
+    #         loss_masks = torch.tensor(0.0, device=src_points.device)
+    #     else:
+    #         loss_masks = torch.cat(losses).mean()
+    #     return {'loss_masks': loss_masks}
+
+    def create_gaussian_region(self, h, w, point, sigma):
+        """在指定点生成高斯权重图"""
+        yy, xx = torch.meshgrid(torch.arange(h, device=point.device), torch.arange(w, device=point.device))
+        dist_sq = (xx - point[0]) ** 2 + (yy - point[1]) ** 2
+        mask = torch.exp(-dist_sq / (2 * sigma ** 2))
+        return mask  # [H, W]
+
+    def iou_loss(self, pred_mask, gt_mask, eps=1e-6):
+        inter = (pred_mask * gt_mask).sum()
+        union = pred_mask.sum() + gt_mask.sum() - inter
+        return 1 - (inter + eps) / (union + eps)
+
+    def loss_masks(self, outputs, targets, indices, num_points, sigma=8, alpha=1.0, beta=1.0, use_iou=True, **kwargs):
         """
-        Mask-aware point-to-region loss:
-        - 如果预测点在掩码内: 使用归一化距离 [0,1]
-        - 如果预测点在掩码外: 给大惩罚 (近似 ∞)
+        P2R-style region consistency loss for point-based models.
+
+        Args:
+            outputs: dict containing 'pred_points' (normalized [0,1]) and 'img_shape' (H, W)
+            targets: list of dicts, each with keys 'points' and 'masks' (SAM分割掩码)
+            indices: 匹配索引列表 [(src_idx, tgt_idx)]
+            num_points: 总点数（用于归一化）
+            sigma: 生成高斯区域时的标准差
+            alpha: 点距离loss权重
+            beta: 区域loss权重
+            use_iou: 是否使用IoU区域损失
+
+        Returns:
+            dict: {'loss_masks': total_loss}
         """
+
         assert 'pred_points' in outputs
         idx = self._get_src_permutation_idx(indices)
-        src_points = outputs['pred_points'][idx]  # [num_matched, 2]
-        target_points = torch.cat([t['points'][j] for t, (_, j) in zip(targets, indices)], dim=0)
-
+        src_points = outputs['pred_points'][idx]  # [num_matched, 2]，归一化坐标
         img_h, img_w = outputs['img_shape']
+        
+        # --- Step 1: 获取匹配目标点与掩码 ---
+        target_points = torch.cat([t['points'][j] for t, (_, j) in zip(targets, indices)], dim=0)
         target_points_norm = target_points.clone()
         target_points_norm[:, 0] /= img_h
         target_points_norm[:, 1] /= img_w
+        # target_masks = [t['masks'][j] for t, (_, j) in zip(targets, indices)]  # list of [H, W] masks
+        target_masks = [t['masks'][j[j < len(t['masks'])]] for t, (_, j) in zip(targets, indices) if len(j[j < len(t['masks'])]) > 0]
 
-        # --- Step 1: 欧式距离 ---
+        # target_masks = []
+        # for t, (_, j) in zip(targets, indices):
+        #     num_masks = len(t['masks'])
+        #     valid_idx = j[j < num_masks]
+        #     if len(valid_idx) == 0:
+        #         continue
+        #     target_masks.append(t['masks'][valid_idx])
+        # print(f'target_masks length: {len(target_masks)}, target_points shape: {target_points.shape}')
+
+        if len(target_points) == 0:
+            return {'loss_masks': torch.tensor(0.0, device=src_points.device)}
+
+        # --- Step 2: 坐标归一化与像素坐标恢复 ---
+        src_pix = src_points.clone()
+        src_pix[:, 0] = src_pix[:, 0] * img_w
+        src_pix[:, 1] = src_pix[:, 1] * img_h
+
+        tgt_pix = target_points.clone()
+        tgt_pix[:, 0] = tgt_pix[:, 0]
+        tgt_pix[:, 1] = tgt_pix[:, 1]
+
+        # --- Step 3: 点级距离损失 ---
         dist = torch.norm(src_points - target_points_norm, dim=1)  # [num_matched]
+        dist_loss = dist.mean()
 
-        # --- Step 2: 掩码约束 ---
-        losses = []
-        for b, (tgt, (_, j)) in enumerate(zip(targets, indices)):
-            mask = tgt['masks'].float()  # [H, W] 0/1
-            ys, xs = src_points[:,0] * img_h, src_points[:,1] * img_w  # 恢复到像素坐标
-            xs = xs.long().clamp(0, mask.shape[1]-1)
-            ys = ys.long().clamp(0, mask.shape[0]-1)
+        # --- Step 4: 区域级一致性损失 ---
+        region_losses = []
 
-            inside = mask[ys, xs] > 0.5
-            # 归一化: 掩码内最大可能距离 (mask 半径或 bbox 对角线)
-            max_dist = torch.sqrt(torch.tensor(mask.shape[0]**2 + mask.shape[1]**2, 
-                                            device=mask.device, dtype=torch.float32))
-            norm_dist = dist / (max_dist + 1e-6)
+        for i, (p, gt_mask) in enumerate(zip(src_pix, target_masks)):
+            H, W = gt_mask.shape[-2:]
+            pred_region = self.create_gaussian_region(H, W, p, sigma=sigma)
+            gt_mask = gt_mask.float()
+            gt_mask[gt_mask>0] = 1.0
 
-            # 掩码外 → 大惩罚
-            loss = torch.where(inside, norm_dist, torch.tensor(10.0, device=dist.device))
-            losses.append(loss)
+            if use_iou:
+                # print(f'pred_region shape: {pred_region.shape}, gt_mask shape: {gt_mask.shape}, pred_region max: {pred_region.max()}, min: {pred_region.min()}, gt_mask max: {gt_mask.max()}, min: {gt_mask.min()}')
+                loss_r = self.iou_loss(pred_region, gt_mask.float())
+            else:
+                # gt_mask = gt_mask.unsqueeze(1) if gt_mask.ndim == 3 else gt_mask
+                # pred_region = pred_region.squeeze(1) if pred_region.shape[1] == 1 else pred_region
+                loss_r = F.binary_cross_entropy(torch.sigmoid(pred_region.float()), gt_mask.float())
 
-        if len(losses) == 0 or torch.cat(losses).numel() == 0:
-            loss_masks = torch.tensor(0.0, device=src_points.device)
-        else:
-            loss_masks = torch.cat(losses).mean()
-        return {'loss_masks': loss_masks}
+            region_losses.append(loss_r)
 
+        region_loss = torch.stack(region_losses).mean() if len(region_losses) > 0 else torch.tensor(0.0, device=src_points.device)
 
-    # def loss_masks(self, outputs, targets, indices, num_points, **kwargs):
-    #     """
-    #     Mask supervision loss (分布式):
-    #     - 掩码内像素值总和应接近 1，掩码外接近 0
-    #     - 相当于预测掩码学习一个 one-hot 分布
-    #     - 用 MSE loss 约束预测与归一化 GT 掩码
-    #     """
-    #     assert 'pred_logits' in outputs
-    #     pred_masks = outputs['pred_logits']  # [B, C, H, W]
-    #     B, H, W = pred_masks.shape
+        # --- Step 5: 融合总loss ---
+        total_loss = alpha * dist_loss + beta * region_loss
 
-    #     # --- 构造 target masks ---
-    #     target_masks = []
-    #     for tgt in targets:
-    #         mask = tgt['masks'].float()  # [H, W] 0/1
-    #         if mask.shape[0] != H or mask.shape[1] != W:
-    #             mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0),
-    #                                 size=(H, W), mode='nearest').squeeze(0).squeeze(0)
-
-    #         # 归一化：掩码内像素和=1，掩码外=0
-    #         if mask.sum() > 0:
-    #             mask = mask / mask.sum()
-    #         target_masks.append(mask)
-
-    #     target_masks = torch.stack(target_masks, dim=0).unsqueeze(1)  # [B, 1, H, W]
-
-    #     # --- loss: 分布对齐 (MSE) ---
-    #     loss_masks = F.mse_loss(pred_masks, target_masks)
-
-    #     return {'loss_masks': loss_masks}
+        return {'loss_masks': total_loss}
 
 
 

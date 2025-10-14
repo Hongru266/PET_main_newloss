@@ -108,10 +108,22 @@ class HungarianMatcher(nn.Module):
         Returns:
             masks: Tensor [N, H, W]，每个mask是二值 {0,1}
         """
+        
+        # print(f'label_map shape:{label_map.shape}, points_ids shape:{points_ids.shape}')
+        # assert label_map.min().item() >= 0, f"label_map contains negative values: min={label_map.min().item()}"
+        # assert len(points_ids.unique()) == label_map.max().item() + 1, f"points_ids and label_map have inconsistent IDs! {len(points_ids.unique())} vs {label_map.max().item()}"
         if num_classes is None:
-            num_classes = int(label_map.max().item())  # 自动获取最大标签值
+            # print("label_map dtype:", label_map.dtype)
+            # print("label_map min:", label_map.min().item(), "max:", label_map.max().item())
+            # print("unique labels:", torch.unique(label_map))
+            # num_classes = int(len(points_ids.unique()))  # 自动获取唯一标签数
+            # print("Inferred num_classes:", num_classes)
+            num_classes = label_map.max().int() # 自动获取最大标签值
         
         # one-hot 展开: [H, W] -> [H, W, N]
+        # print("label_map min:", label_map.min().item(), "max:", label_map.max().item())
+        # print("num_classes:", num_classes)
+
         masks = torch.nn.functional.one_hot(label_map.long(), num_classes=num_classes+1)  # 包含背景
         masks = masks.permute(2, 0, 1).contiguous()  # -> [N+1, H, W]
         points_ids = points_ids + 1  # 因为masks包含背景，点ID需要+1对齐

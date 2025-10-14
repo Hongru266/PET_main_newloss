@@ -1366,3 +1366,5 @@ epoch:455, mae:102.2874251497006, rmse:186.9329829638432, time27.026758432388306
 
 best mae:96.33233532934132, best rmse:171.90698640848748, best epoch: 355
 
+
+[ep 456][lr 0.0005000][448.82s]{"train_lr": 0.0005000000000000003, "train_loss": 14.093986771901449, "train_loss_ce_sp": 0.06905486239741246, "train_loss_points_sp": 0.0008223153794339547, "train_loss_masks_sp": 6.9852006371816, "train_loss_ce_ds": 0.013244529894242685, "train_loss_points_ds": 0.00029449493372036764, "train_loss_masks_ds": 6.944702660242717, "train_loss_split": 0.08066697562734969, "train_loss_ce_sp_unscaled": 0.06905486239741246, "train_loss_points_sp_unscaled": 0.00016446307621663435, "train_loss_masks_sp_unscaled": 6.9852006371816, "train_loss_ce_ds_unscaled": 0.013244529894242685, "train_loss_points_ds_unscaled": 5.8898986959926936e-05, "train_loss_masks_ds_unscaled": 6.944702660242717, "train_loss_split_unscaled": 0.8066697442531585, "epoch": 456, "n_parameters": 20909385}

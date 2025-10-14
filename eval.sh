@@ -1,5 +1,5 @@
-CUDA_VISIBLE_DEVICES='0' \
+CUDA_VISIBLE_DEVICES='1' \
 python eval.py \
-    --dataset_file="SHA" \
-    --resume="path_to_model" \
+    --dataset_file="UCF" \
+    --resume="UCF_QNRF.pth" \
     --vis_dir=""

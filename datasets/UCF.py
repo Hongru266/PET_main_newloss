@@ -154,6 +154,7 @@ class UCF(Dataset):
             density = self.compute_density(points) #通过计算真实标注点之间的平均最近距离来衡量人群的拥挤程度
             target['density'] = density
             target['masks'] = masks
+            # target['patch_list'] = patch_list
             
             # 将字典转换为张量格式
             if dicts:  # 字典不为空
@@ -174,6 +175,7 @@ class UCF(Dataset):
             target['masks'] = torch.empty(0, dtype=torch.uint8)
             target['dicts_coords'] = torch.empty(0, 2, dtype=torch.float32) 
             target['dicts_keys'] = torch.empty(0, dtype=torch.long)
+            # target['patch_list'] = patch_list
         dicts_coords_values = target['dicts_coords'].numpy() if hasattr(target["dicts_coords"], "numpy") else target["dicts_coords"]
         # print(f'after target: img shape: {img.shape}, points shape: {target["points"].shape}, masks shape: {target["masks"].shape if len(masks) > 0 else "N/A"}, dicts_coords shape: {target["dicts_coords"].shape}, dicts_coords[:, 0] max:{dicts_coords_values[:, 0].max()}, dicts_keys shape: {target["dicts_keys"].shape}')
         if not self.train:
@@ -236,6 +238,8 @@ class UCF(Dataset):
                 next_index = (index + 1) % len(self.img_list)
             return self.__getitem__(next_index)
 
+            
+
         #测试gt prob_map和shift_map
         target_masks = target["masks"].float()
         # 将非0值均变为1
@@ -256,6 +260,7 @@ def load_data(img_gt_path, train):
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     # points = io.loadmat(gt_path)['image_info'][0][0][0][0][0][:,::-1]  # (N,2) - (x,y)
     points = io.loadmat(gt_path)['annPoints'][:,::-1]  # (N,2) - (x,y)
+    img_name = os.path.basename(img_path)
     
     if train and masks_path is not None and dict_path is not None:
         masks = np.load(masks_path)
@@ -271,10 +276,14 @@ def load_data(img_gt_path, train):
             key: (coord[1], coord[0]) if isinstance(coord, (tuple, list)) and len(coord) >= 2 else coord
             for key, coord in dicts.items()
         }
+        # patch_list = []
     else:
         # 测试模式下返回空的 masks 和 dicts
         masks = np.array([])
         dicts = {}
+        # with open('./data/UCF-QNRF/Test_split/info.json', 'r', encoding='utf-8') as f:
+        #     info = json.load(f)
+        # patch_list = info
     dicts_array = np.array(list(dicts.values()))
     # print(f'original: img shape: {img.size}, points shape: {points.shape}, points example:{points[:,0].max()} masks shape: {masks.shape if len(masks) > 0 else "N/A"}, dicts[:, 0] max: {dicts_array[:,0].max() if len(dicts_array) > 0 else "N/A"}')
 

@@ -12,6 +12,7 @@ import datasets
 from datasets import build_dataset
 import util.misc as utils
 from engine import evaluate
+# from engine_split import evaluate as evaluate_split
 from models import build_model
 
 
@@ -42,9 +43,12 @@ def get_args_parser():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--set_cost_point', default=0.05, type=float,
                         help="SmoothL1 point coefficient in the matching cost")
+    parser.add_argument('--set_cost_mask', default=1.0, type=float,
+                        help="Mask coefficient in the matching cost")
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)       # classification loss coefficient
     parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient
+    parser.add_argument('--mask_loss_coef', default=1.0, type=float)     # mask loss coefficient
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
 
@@ -114,8 +118,9 @@ def main(args):
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir
     test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir)
-    mae, mse = test_stats['mae'], test_stats['mse']
-    line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
+    # test_stats = evaluate_split(model, data_loader_val, device, epoch=cur_epoch, vis_dir=vis_dir)
+    mae, rmse = test_stats['mae'], test_stats['rmse']
+    line = f'\nepoch: {cur_epoch}, mae: {mae}, rmse: {rmse}' 
     print(line)
 
 
